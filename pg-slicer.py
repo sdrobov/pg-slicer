@@ -64,16 +64,6 @@ def describe_table(table_name, cursor):
                    'AND pg_catalog.pg_table_is_visible(c.oid)', (f'^({table_name})$',))
     oid = cursor.fetchone()[0]
 
-    cursor.execute('SELECT c.relchecks, c.relkind, c.relhasindex, c.relhasrules, c.relhastriggers, '
-                   'c.relrowsecurity, c.relforcerowsecurity, c.relhasoids, c.reltablespace, '
-                   'CASE WHEN c.reloftype = 0 THEN \'\' '
-                   'ELSE c.reloftype::pg_catalog.regtype::pg_catalog.text END, c.relpersistence, '
-                   'c.relreplident '
-                   'FROM pg_catalog.pg_class c '
-                   'LEFT JOIN pg_catalog.pg_class tc ON (c.reltoastrelid = tc.oid) '
-                   'WHERE c.oid = %s', (oid,))
-    strange_fields = cursor.fetchone()
-
     cursor.execute('SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), '
                    '(SELECT substring(pg_catalog.pg_get_expr(d.adbin, d.adrelid) for 128) '
                    'FROM pg_catalog.pg_attrdef d '
@@ -108,7 +98,7 @@ def describe_table(table_name, cursor):
     indexes = cursor.fetchall()
 
     cursor.execute('SELECT conname, confrelid::pg_catalog.regclass, '
-                   'pg_catalog.pg_get_constraintdef(r.oid, true) as condef '
+                   'pg_catalog.pg_get_constraintdef(r.oid, true) as condef, \'parent\' '
                    'FROM pg_catalog.pg_constraint r '
                    'WHERE r.conrelid = %s '
                    'AND r.contype = \'f\' '
@@ -116,54 +106,98 @@ def describe_table(table_name, cursor):
     parents = cursor.fetchall()
 
     cursor.execute('SELECT conname, conrelid::pg_catalog.regclass, '
-                   'pg_catalog.pg_get_constraintdef(c.oid, true) as condef '
+                   'pg_catalog.pg_get_constraintdef(c.oid, true) as condef, \'child\' '
                    'FROM pg_catalog.pg_constraint c '
                    'WHERE c.confrelid = %s '
                    'AND c.contype = \'f\' '
                    'ORDER BY 1', (oid,))
     children = cursor.fetchall()
 
-    table_description = {
-        'columns': [],
-        'indexes': [],
-        'relations': [],
-    }
+    relations = parents + children
 
-    for column in columns:
-        table_description['columns'].append({
+    return {
+        'columns': [{
             'name': column[0],
             'type': column[1],
             'default': column[2],
             'not_null': column[3],
             'position': column[4],
-        })
-
-    for index in indexes:
-        table_description['indexes'].append({
+        } for column in columns],
+        'indexes': [{
             'name': index[0],
             'is_primary': index[1],
             'is_unique': index[2],
             'create_query': index[5],
             'constraint_query': index[6],
-        })
+        } for index in indexes],
+        'relations': [{
+            'table': relation[1],
+            'fk_name': relation[0],
+            'create_query': relation[2],
+            'relation': relation[3],
+        } for relation in relations],
+    }
 
-    for parent in parents:
-        table_description['relations'].append({
-            'table': parent[1],
-            'fk_name': parent[0],
-            'create_query': parent[2],
-            'relation': 'parent',
-        })
 
-    for child in children:
-        table_description['relations'].append({
-            'table': child[1],
-            'fk_name': child[0],
-            'create_query': child[2],
-            'relation': 'child',
-        })
+def get_table_names(cursor):
+    cursor.execute('SELECT table_name FROM information_schema.tables '
+                   'WHERE table_schema = \'public\'')
 
-    return table_description
+    return [row[0] for row in cursor.fetchall()]
+
+
+def get_root_tables(tables):
+    root_rables = []
+
+    for name, props in tables.items():
+        root_table = True
+        for relation in props['relations']:
+            if relation['relation'] == 'parent':
+                root_table = False
+
+                break
+
+        if root_table:
+            root_rables.append(name)
+
+    return root_rables
+
+
+def generate_create_table(table_name, tables):
+    table_query = f'CREATE TABLE IF NOT EXISTS {table_name} (\n'
+
+    column_queries = []
+    index_queries = [index['create_query'] for index in tables[table_name]['indexes'] if
+                     not index['constraint_query']]
+    constraint_queries = [index['constraint_query'] for index in tables[table_name]['indexes'] if
+                          index['constraint_query']]
+
+    for column in tables[table_name]['columns']:
+        col_name = column['name']
+        col_type = column['type']
+        col_default = column['default']
+        col_not_null = column['not_null']
+
+        column_query = f'{col_name} {col_type}'
+        column_query += f' DEFAULT {col_default}' if col_default else ''
+        column_query += ' NOT NULL' if col_not_null else ''
+
+        column_queries.append(column_query)
+
+    table_query += ',\n'.join(column_queries)
+    table_query += ',\n' + ',\n'.join(constraint_queries) if constraint_queries else ''
+    table_query += ');\n'
+    table_query += ';\n'.join(index_queries) + ';'
+
+    return table_query
+
+
+def generate_schema(tables):
+    root_table_names = get_root_tables(tables)
+    processed_tables = []
+
+    for table_name in root_table_names:
+        create_table = generate_create_table(table_name, tables)
 
 
 def main():
@@ -171,17 +205,10 @@ def main():
     dsn = build_dsn(options)
     connection = psycopg2.connect(dsn)
     cursor = connection.cursor()
+    table_names = get_table_names(cursor)
+    tables = {table_name: describe_table(table_name, cursor) for table_name in table_names}
 
-    cursor.execute('SELECT table_name FROM information_schema.tables '
-                   'WHERE table_schema = \'public\'')
-
-    table_names = [row[0] for row in cursor.fetchall()]
-
-    tables = {}
-    for table_name in table_names:
-        tables[table_name] = describe_table(table_name, cursor)
-
-    print(tables)
+    generate_schema(tables)
 
 
 if __name__ == '__main__':
