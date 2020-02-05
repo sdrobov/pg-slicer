@@ -302,12 +302,12 @@ def select_items(cursor, table_name, limit, condition=None):
     for row in cursor.fetchall():
         line = []
         for col in row:
-            if type(col) is not str:
+            if not col:
+                line.append('NULL')
+            elif type(col) is not str:
                 line.append(str(col))
             else:
-                line.append("'" + col.translate(str.maketrans({
-                    "'": r"\'",
-                })) + "'")
+                line.append("'" + col.replace("'", r"\'") + "'")
 
         copies.append(','.join(line))
 
