@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 from os import getenv
-
 import psycopg2
 
 
@@ -113,7 +112,7 @@ def describe_table(table_name, cursor):
 
     relations = parents + children
 
-    return {
+    table_description = {
         'columns': [{
             'name': column[0],
             'type': column[1],
@@ -134,8 +133,24 @@ def describe_table(table_name, cursor):
             'fk_name': relation[0],
             'create_query': relation[2],
             'relation': relation[3],
+            'src': None,
+            'dest': None,
         } for relation in relations],
     }
+
+    for relation in table_description['relations']:
+        if relation['relation'] != 'parent':
+            continue
+
+        cursor.execute('SELECT conkey, confkey '
+                       'FROM pg_catalog.pg_constraint '
+                       'WHERE conname = %s', (relation['fk_name'],))
+
+        row = cursor.fetchone()
+        if row:
+            [relation['src'], relation['dest']] = [row[0], row[1]]
+
+    return table_description
 
 
 def get_table_names(cursor):
@@ -154,22 +169,22 @@ def get_table_names(cursor):
 def get_root_tables(tables):
     root_tables = []
 
-    for name, props in tables.items():
+    for table_name, table_data in tables.items():
         root_table = True
-        for relation in props['relations']:
+        for relation in table_data['relations']:
             if relation['relation'] == 'parent':
                 root_table = False
 
                 break
 
-        if root_table:
-            root_tables.append(name)
+        if root_table and table_name not in root_tables:
+            root_tables.append(table_name)
 
     return root_tables
 
 
 def generate_create_table(table_name, tables):
-    table_query = f'CREATE TABLE IF NOT EXISTS {table_name} (\n'
+    table_query = f'CREATE TABLE IF NOT EXISTS "{table_name}" (\n'
 
     column_queries = []
     index_queries = [index['create_query'] for index in tables[table_name]['indexes'] if
@@ -185,14 +200,14 @@ def generate_create_table(table_name, tables):
         col_not_null = column['not_null']
         col_comment = column['comment']
 
-        column_query = f'{col_name} {col_type}'
+        column_query = f'"{col_name}" {col_type}'
         column_query += f' DEFAULT {col_default}' if col_default else ''
         column_query += ' NOT NULL' if col_not_null else ''
 
         column_queries.append('\t' + column_query)
 
         if col_comment:
-            comments.append(f'COMMENT ON COLUMN {table_name}.{col_name} IS \'{col_comment}\'')
+            comments.append(f'COMMENT ON COLUMN "{table_name}"."{col_name}" IS \'{col_comment}\'')
 
     table_query += ',\n'.join(column_queries)
     table_query += ',\n' + ',\n'.join(constraint_queries) if constraint_queries else ''
@@ -205,7 +220,7 @@ def generate_create_table(table_name, tables):
     return table_query + '\n'
 
 
-def process_table(table_name, tables, processed_tables):
+def generate_create_table_recursive(table_name, tables, processed_tables):
     table_data = tables[table_name]
     processed_tables.append(table_name)
     schema = ''
@@ -218,7 +233,7 @@ def process_table(table_name, tables, processed_tables):
             continue
 
         processed_tables.append(parent_table)
-        schema += process_table(parent_table, tables, processed_tables)
+        schema += generate_create_table_recursive(parent_table, tables, processed_tables)
 
     schema += generate_create_table(table_name, tables)
 
@@ -230,6 +245,9 @@ def generate_schema(tables, sequences):
     root_table_names = get_root_tables(tables)
     processed_tables = []
 
+    for sequence_name, sequence_data in sequences.items():
+        schema += generate_sequence(sequence_name, sequence_data)
+
     for table_name in root_table_names:
         schema += generate_create_table(table_name, tables)
         processed_tables.append(table_name)
@@ -239,27 +257,32 @@ def generate_schema(tables, sequences):
             if table_name in processed_tables:
                 continue
 
-            schema += process_table(table_name, tables, processed_tables)
+            schema += generate_create_table_recursive(table_name, tables, processed_tables)
 
-    for sequence_name, sequence_data in sequences.items():
-        seq_inc = sequence_data['increment_by']
-        seq_min = sequence_data['min_value']
-        seq_max = sequence_data['max_value']
-        seq_start = sequence_data['start_value']
+    return schema
 
-        schema += f'CREATE SEQUENCE IF NOT EXISTS {sequence_name} ' \
-                  f'INCREMENT {seq_inc} ' \
-                  f'MINVALUE {seq_min} ' \
-                  f'MAXVALUE {seq_max} ' \
-                  f'START {seq_start}'
 
-        if sequence_data['cache_value']:
-            schema += ' CACHE ' + str(sequence_data['cache_value'])
+def generate_sequence(sequence_name, sequence_data):
+    schema = ''
 
-        if sequence_data['is_cycled']:
-            schema += ' CYCLE'
+    seq_inc = sequence_data['increment_by']
+    seq_min = sequence_data['min_value']
+    seq_max = sequence_data['max_value']
+    seq_start = sequence_data['start_value']
 
-        schema += ';\n'
+    schema += f'CREATE SEQUENCE IF NOT EXISTS {sequence_name} ' \
+              f'INCREMENT {seq_inc} ' \
+              f'MINVALUE {seq_min} ' \
+              f'MAXVALUE {seq_max} ' \
+              f'START {seq_start}'
+
+    if sequence_data['cache_value']:
+        schema += ' CACHE ' + str(sequence_data['cache_value'])
+
+    if sequence_data['is_cycled']:
+        schema += ' CYCLE'
+
+    schema += ';\n'
 
     return schema
 
@@ -292,38 +315,128 @@ def describe_sequence(sequence_name, cursor):
     }
 
 
-def select_items(cursor, table_name, limit, condition=None):
+def generate_copy(cursor, table_name, limit, hashes, condition=None):
     query = f'SELECT * FROM {table_name}'
     query += f' WHERE {condition}' if condition else ''
     query += f' ORDER BY 1 DESC LIMIT {limit}'
     cursor.execute(query)
 
-    copies = []
     for row in cursor.fetchall():
+        row_id = row[0]
+        if table_name not in hashes.keys():
+            hashes[table_name] = {row_id: ''}
+        elif row_id not in hashes[table_name].keys():
+            hashes[table_name][row_id] = ''
+        else:
+            continue
+
         line = []
         for col in row:
-            if not col:
-                line.append('NULL')
+            if col is None:
+                line.append('\\N')
+            elif type(col) is bool:
+                line.append('t' if col else 'f')
             elif type(col) is not str:
                 line.append(str(col))
             else:
-                line.append("'" + col.replace("'", r"\'") + "'")
+                line.append(col.replace('\r\n', '\n').replace('\n', '\\r\\n').replace('\t', '\\t'))
 
-        copies.append(','.join(line))
+        hashes[table_name][row_id] = line
 
-    return f'COPY {table_name} FROM STDIN DELIMITER \',\'\n' + '\n'.join(copies) + '\n\\.\n'
+
+def generate_condition(parent_table_data, tables, hashes):
+    condition = []
+    parent_table_name = parent_table_data['table']
+
+    if parent_table_name not in hashes:
+        return ''
+
+    src = parent_table_data['src']
+    dest = parent_table_data['dest']
+    if not src or not dest:
+        return ''
+
+    col_name = None
+    can_be_null = False
+    for column in tables[parent_table_name]['columns']:
+        if column['position'] == src:
+            col_name = column['name']
+            can_be_null = not column['not_null']
+
+            break
+
+    if not col_name:
+        return ''
+
+    for (row_id, row) in hashes[parent_table_name].keys():
+        value = row[dest]
+        if type(value) is not int:
+            condition.append(f'\'{value}\'')
+        else:
+            condition.append(value)
+
+    return f'{col_name} IN (%s)' % ','.join(condition)\
+           + f' OR {col_name} IS NULL' if can_be_null else ''
+
+
+def generate_copy_recursive(cursor, table_name, tables, limit, hashes):
+    if table_name in hashes:
+        return
+
+    table_data = tables[table_name]
+    parent_tables = [relation for relation in table_data['relations']
+                     if relation['relation'] == 'parent']
+
+    if parent_tables:
+        for parent_table_data in parent_tables:
+            parent_table_name = parent_table_data['table']
+            if parent_table_name == table_name or parent_table_name in hashes:
+                continue
+
+            condition = generate_condition(parent_table_data, tables, hashes)
+            generate_copy_recursive(cursor, parent_table_name, tables, limit, hashes)
+            generate_copy(cursor, table_name, limit, hashes, condition)
+    else:
+        generate_copy(cursor, table_name, limit, hashes)
 
 
 def generate_data(cursor, tables, limit):
-    root_table_names = get_root_tables(tables)
-    processed_tables = []
+    # root_table_names = get_root_tables(tables)
+    hashes = {}
     data = ''
 
-    for root_table_name in root_table_names:
-        processed_tables.append(root_table_name)
-        data += select_items(cursor, root_table_name, limit)
+    # for root_table_name in root_table_names:
+    #     generate_copy(cursor, root_table_name, limit, hashes)
+
+    for table_name in tables.keys():
+        generate_copy_recursive(cursor, table_name, tables, limit, hashes)
+
+    for table_name in hashes.keys():
+        data += f'COPY {table_name} FROM stdin;\n'
+        for rows, row_data in hashes[table_name].items():
+            data += '\t'.join(row_data) + '\n'
+        data += '\\.\n\n'
 
     return data
+
+
+def generate_extensions(cursor):
+    cursor.execute('SELECT e.extname, n.nspname, c.description '
+                   'FROM pg_catalog.pg_extension e '
+                   'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace '
+                   'LEFT JOIN pg_catalog.pg_description c ON c.objoid= e.oid '
+                   'AND c.classoid = \'pg_catalog.pg_extension\'::pg_catalog.regclass '
+                   'ORDER BY n.nspname')
+
+    extensions = []
+    for row in cursor.fetchall():
+        ext_name = row[0]
+        ext_schema = row[1]
+        ext_descr = row[2]
+        extensions.append(f'CREATE EXTENSION IF NOT EXISTS "{ext_name}" WITH SCHEMA {ext_schema};\n'
+                          f'COMMENT ON EXTENSION "{ext_name}" IS \'{ext_descr}\';\n')
+
+    return '\n'.join(extensions) + '\n\n'
 
 
 def main():
@@ -336,10 +449,11 @@ def main():
     tables = {table_name: describe_table(table_name, cursor) for table_name in table_names}
     sequences = {sequence_name: describe_sequence(sequence_name, cursor) for sequence_name in
                  sequence_names}
+    extensions = generate_extensions(cursor)
     schema = generate_schema(tables, sequences)
     data = generate_data(cursor, tables, options.limit)
 
-    print(schema + '\n\n' + data)
+    print(extensions + '\n\n' + schema + '\n\n' + data)
 
 
 if __name__ == '__main__':
