@@ -341,11 +341,13 @@ def generate_copy(cursor: _cursor,
                 line.append(json.dumps(col))
             elif type(col) is not str:
                 line.append(str(col)
+                            .replace('\\', '\\\\')
                             .replace('\r\n', '\n')
                             .replace('\n', '\\r\\n')
                             .replace('\t', '\\t'))
             else:
                 line.append(col
+                            .replace('\\', '\\\\')
                             .replace('\r\n', '\n')
                             .replace('\n', '\\r\\n')
                             .replace('\t', '\\t'))
