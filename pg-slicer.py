@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 from os import getenv
 import psycopg2
 
@@ -17,26 +18,23 @@ class Options:
         self.no_subscriptions = None
 
 
-def parse_cli_args():
+def parse_cli_args() -> Options:
     parser = argparse.ArgumentParser(description="PostgreSQL DB data slicer", add_help=False)
-    parser.add_argument('-h', '--host', dest='host', default=getenv('PGS_HOST'))
-    parser.add_argument('-p', '--port', type=int, dest='port', default=getenv('PGS_PORT'))
-    parser.add_argument('-U', '--user', dest='user', default=getenv('PGS_USER'))
-    parser.add_argument('-W', '--password', dest='password', default=getenv('PGS_PASSWORD'))
-    parser.add_argument('-l', '--limit', type=int, dest='limit', default=getenv('PGS_LIMIT', 100))
-    parser.add_argument('--no-privileges', action='store_true', dest='no_privileges',
-                        default=getenv('PGS_NO_PRIVILEGES'))
-    parser.add_argument('--no-publications', action='store_true', dest='no_publications',
-                        default=getenv('PGS_NO_PUBLICATIONS'))
-    parser.add_argument('--no-subscriptions', action='store_true', dest='no_subscriptions',
-                        default=getenv('PGS_NO_SUBSCRIPTIONS'))
+    parser.add_argument('-h', '--host', dest='host', default=getenv('PGHOST'))
+    parser.add_argument('-p', '--port', type=int, dest='port', default=getenv('PGPORT'))
+    parser.add_argument('-U', '--user', dest='user', default=getenv('PGUSER'))
+    parser.add_argument('-W', '--password', dest='password')
+    parser.add_argument('-l', '--limit', type=int, dest='limit', default=100)
+    parser.add_argument('--no-privileges', action='store_true', dest='no_privileges')
+    parser.add_argument('--no-publications', action='store_true', dest='no_publications')
+    parser.add_argument('--no-subscriptions', action='store_true', dest='no_subscriptions')
     parser.add_argument('--help', action='help')
-    parser.add_argument('DBNAME')
+    parser.add_argument('DBNAME', default=getenv('PGDATABASE'))
 
     return parser.parse_args(namespace=Options)
 
 
-def build_dsn(options):
+def build_dsn(options: Options) -> str:
     params = {
         'dbname': options.DBNAME
     }
@@ -56,7 +54,7 @@ def build_dsn(options):
     return ' '.join([f'{key}={value}' for key, value in params.items()])
 
 
-def describe_table(table_name, cursor):
+def describe_table(table_name: str, cursor: object) -> dict:
     cursor.execute('SELECT c.oid FROM pg_catalog.pg_class c '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
                    'WHERE c.relname OPERATOR(pg_catalog.~) %s '
@@ -153,7 +151,7 @@ def describe_table(table_name, cursor):
     return table_description
 
 
-def get_table_names(cursor):
+def get_table_names(cursor: object) -> list:
     cursor.execute('SELECT c.relname '
                    'FROM pg_catalog.pg_class c '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
@@ -163,10 +161,10 @@ def get_table_names(cursor):
                    'AND n.nspname !~ \'^pg_toast\' '
                    'AND pg_catalog.pg_table_is_visible(c.oid)')
 
-    return [row[0] for row in cursor.fetchall()]
+    return [row[0] for row in cursor]
 
 
-def get_root_tables(tables):
+def get_root_tables(tables: dict) -> list:
     root_tables = []
 
     for table_name, table_data in tables.items():
@@ -183,7 +181,7 @@ def get_root_tables(tables):
     return root_tables
 
 
-def generate_create_table(table_name, tables):
+def generate_create_table(table_name: str, tables: dict) -> str:
     table_query = f'CREATE TABLE IF NOT EXISTS "{table_name}" (\n'
 
     column_queries = []
@@ -220,7 +218,7 @@ def generate_create_table(table_name, tables):
     return table_query + '\n'
 
 
-def generate_create_table_recursive(table_name, tables, processed_tables):
+def generate_create_table_recursive(table_name: str, tables: dict, processed_tables: list) -> str:
     table_data = tables[table_name]
     processed_tables.append(table_name)
     schema = ''
@@ -240,7 +238,7 @@ def generate_create_table_recursive(table_name, tables, processed_tables):
     return schema
 
 
-def generate_schema(tables, sequences):
+def generate_schema(tables: dict, sequences: dict) -> str:
     schema = ''
     root_table_names = get_root_tables(tables)
     processed_tables = []
@@ -262,7 +260,7 @@ def generate_schema(tables, sequences):
     return schema
 
 
-def generate_sequence(sequence_name, sequence_data):
+def generate_sequence(sequence_name: str, sequence_data: dict) -> str:
     schema = ''
 
     seq_inc = sequence_data['increment_by']
@@ -287,7 +285,7 @@ def generate_sequence(sequence_name, sequence_data):
     return schema
 
 
-def get_sequence_names(cursor):
+def get_sequence_names(cursor: object) -> list:
     cursor.execute('SELECT c.relname '
                    'FROM pg_catalog.pg_class c '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
@@ -297,10 +295,10 @@ def get_sequence_names(cursor):
                    'AND n.nspname !~ \'^pg_toast\' '
                    'AND pg_catalog.pg_table_is_visible(c.oid)')
 
-    return [row[0] for row in cursor.fetchall()]
+    return [row[0] for row in cursor]
 
 
-def describe_sequence(sequence_name, cursor):
+def describe_sequence(sequence_name: str, cursor: object) -> dict:
     cursor.execute('SELECT start_value, min_value, max_value, increment_by, is_cycled, cache_value '
                    f'FROM {sequence_name}')
     row = cursor.fetchone()
@@ -315,19 +313,21 @@ def describe_sequence(sequence_name, cursor):
     }
 
 
-def generate_copy(cursor, table_name, limit, hashes, condition=None):
+def generate_copy(cursor: object,
+                  table_name: str,
+                  limit: int,
+                  hashes: dict,
+                  condition: str = None) -> None:
+    if table_name not in hashes.keys():
+        hashes[table_name] = {}
+
     query = f'SELECT * FROM {table_name}'
     query += f' WHERE {condition}' if condition else ''
     query += f' ORDER BY 1 DESC LIMIT {limit}'
     cursor.execute(query)
 
-    for row in cursor.fetchall():
-        row_id = row[0]
-        if table_name not in hashes.keys():
-            hashes[table_name] = {row_id: ''}
-        elif row_id not in hashes[table_name].keys():
-            hashes[table_name][row_id] = ''
-        else:
+    for row in cursor:
+        if row[0] in hashes[table_name].keys():
             continue
 
         line = []
@@ -336,16 +336,24 @@ def generate_copy(cursor, table_name, limit, hashes, condition=None):
                 line.append('\\N')
             elif type(col) is bool:
                 line.append('t' if col else 'f')
+            elif type(col) is dict:
+                line.append(json.dumps(col))
             elif type(col) is not str:
-                line.append(str(col))
+                line.append(str(col)
+                            .replace('\r\n', '\n')
+                            .replace('\n', '\\r\\n')
+                            .replace('\t', '\\t'))
             else:
-                line.append(col.replace('\r\n', '\n').replace('\n', '\\r\\n').replace('\t', '\\t'))
+                line.append(col
+                            .replace('\r\n', '\n')
+                            .replace('\n', '\\r\\n')
+                            .replace('\t', '\\t'))
 
-        hashes[table_name][row_id] = line
+        hashes[table_name][row[0]] = line
 
 
-def generate_condition(parent_table_data, tables, hashes):
-    condition = []
+def prepare_condition(parent_table_data: dict, tables: dict, hashes: dict) -> str:
+    values = []
     parent_table_name = parent_table_data['table']
 
     if parent_table_name not in hashes:
@@ -356,30 +364,45 @@ def generate_condition(parent_table_data, tables, hashes):
     if not src or not dest:
         return ''
 
+    (col_name, can_be_null) = get_key_column(src, tables[parent_table_name])
+    if not col_name:
+        return ''
+
+    for (row_id, row) in hashes[parent_table_name].items():
+        value = row[dest]
+        if type(value) is not int:
+            values.append(f'\'{value}\'')
+        else:
+            values.append(value)
+
+    return generate_condition(col_name, values, can_be_null)
+
+
+def generate_condition(col_name: str, values: list = None, can_be_null: bool = False) -> str:
+    null_part = f' {col_name} IS NULL' if can_be_null else ''
+    cond_part = f' {col_name} IN (%s)' % ','.join(values) if values else ''
+
+    return cond_part + null_part
+
+
+def get_key_column(pos: int, table_data: dict) -> tuple:
     col_name = None
     can_be_null = False
-    for column in tables[parent_table_name]['columns']:
-        if column['position'] == src:
+    for column in table_data['columns']:
+        if column['position'] == pos:
             col_name = column['name']
             can_be_null = not column['not_null']
 
             break
 
-    if not col_name:
-        return ''
-
-    for (row_id, row) in hashes[parent_table_name].keys():
-        value = row[dest]
-        if type(value) is not int:
-            condition.append(f'\'{value}\'')
-        else:
-            condition.append(value)
-
-    return f'{col_name} IN (%s)' % ','.join(condition)\
-           + f' OR {col_name} IS NULL' if can_be_null else ''
+    return col_name, can_be_null
 
 
-def generate_copy_recursive(cursor, table_name, tables, limit, hashes):
+def generate_copy_recursive(cursor: object,
+                            table_name: str,
+                            tables: dict,
+                            limit: int,
+                            hashes: dict) -> None:
     if table_name in hashes:
         return
 
@@ -390,23 +413,18 @@ def generate_copy_recursive(cursor, table_name, tables, limit, hashes):
     if parent_tables:
         for parent_table_data in parent_tables:
             parent_table_name = parent_table_data['table']
-            if parent_table_name == table_name or parent_table_name in hashes:
-                continue
+            if parent_table_name != table_name and parent_table_name in hashes.keys():
+                generate_copy_recursive(cursor, parent_table_name, tables, limit, hashes)
 
-            condition = generate_condition(parent_table_data, tables, hashes)
-            generate_copy_recursive(cursor, parent_table_name, tables, limit, hashes)
+            condition = prepare_condition(parent_table_data, tables, hashes)
             generate_copy(cursor, table_name, limit, hashes, condition)
     else:
         generate_copy(cursor, table_name, limit, hashes)
 
 
-def generate_data(cursor, tables, limit):
-    # root_table_names = get_root_tables(tables)
+def generate_data(cursor: object, tables: dict, limit: int) -> str:
     hashes = {}
     data = ''
-
-    # for root_table_name in root_table_names:
-    #     generate_copy(cursor, root_table_name, limit, hashes)
 
     for table_name in tables.keys():
         generate_copy_recursive(cursor, table_name, tables, limit, hashes)
@@ -420,7 +438,7 @@ def generate_data(cursor, tables, limit):
     return data
 
 
-def generate_extensions(cursor):
+def generate_extensions(cursor: object) -> str:
     cursor.execute('SELECT e.extname, n.nspname, c.description '
                    'FROM pg_catalog.pg_extension e '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace '
@@ -429,7 +447,7 @@ def generate_extensions(cursor):
                    'ORDER BY n.nspname')
 
     extensions = []
-    for row in cursor.fetchall():
+    for row in cursor:
         ext_name = row[0]
         ext_schema = row[1]
         ext_descr = row[2]
