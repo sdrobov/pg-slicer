@@ -3,6 +3,7 @@ import argparse
 import json
 from os import getenv
 import psycopg2
+from psycopg2.extensions import cursor as _cursor
 
 
 class Options:
@@ -54,7 +55,7 @@ def build_dsn(options: Options) -> str:
     return ' '.join([f'{key}={value}' for key, value in params.items()])
 
 
-def describe_table(table_name: str, cursor: object) -> dict:
+def describe_table(table_name: str, cursor: _cursor) -> dict:
     cursor.execute('SELECT c.oid FROM pg_catalog.pg_class c '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
                    'WHERE c.relname OPERATOR(pg_catalog.~) %s '
@@ -151,7 +152,7 @@ def describe_table(table_name: str, cursor: object) -> dict:
     return table_description
 
 
-def get_table_names(cursor: object) -> list:
+def get_table_names(cursor: _cursor) -> list:
     cursor.execute('SELECT c.relname '
                    'FROM pg_catalog.pg_class c '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
@@ -285,7 +286,7 @@ def generate_sequence(sequence_name: str, sequence_data: dict) -> str:
     return schema
 
 
-def get_sequence_names(cursor: object) -> list:
+def get_sequence_names(cursor: _cursor) -> list:
     cursor.execute('SELECT c.relname '
                    'FROM pg_catalog.pg_class c '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
@@ -298,7 +299,7 @@ def get_sequence_names(cursor: object) -> list:
     return [row[0] for row in cursor]
 
 
-def describe_sequence(sequence_name: str, cursor: object) -> dict:
+def describe_sequence(sequence_name: str, cursor: _cursor) -> dict:
     cursor.execute('SELECT start_value, min_value, max_value, increment_by, is_cycled, cache_value '
                    f'FROM {sequence_name}')
     row = cursor.fetchone()
@@ -313,7 +314,7 @@ def describe_sequence(sequence_name: str, cursor: object) -> dict:
     }
 
 
-def generate_copy(cursor: object,
+def generate_copy(cursor: _cursor,
                   table_name: str,
                   limit: int,
                   hashes: dict,
@@ -398,7 +399,7 @@ def get_key_column(pos: int, table_data: dict) -> tuple:
     return col_name, can_be_null
 
 
-def generate_copy_recursive(cursor: object,
+def generate_copy_recursive(cursor: _cursor,
                             table_name: str,
                             tables: dict,
                             limit: int,
@@ -422,7 +423,7 @@ def generate_copy_recursive(cursor: object,
         generate_copy(cursor, table_name, limit, hashes)
 
 
-def generate_data(cursor: object, tables: dict, limit: int) -> str:
+def generate_data(cursor: _cursor, tables: dict, limit: int) -> str:
     hashes = {}
     data = ''
 
@@ -438,7 +439,7 @@ def generate_data(cursor: object, tables: dict, limit: int) -> str:
     return data
 
 
-def generate_extensions(cursor: object) -> str:
+def generate_extensions(cursor: _cursor) -> str:
     cursor.execute('SELECT e.extname, n.nspname, c.description '
                    'FROM pg_catalog.pg_extension e '
                    'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace '
