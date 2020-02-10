@@ -18,6 +18,7 @@ deploy:
   provider: releases
   api_key:
     secure: e9cewCMHVF8X8XPNUGTKS0VBgulllqWTgVrGm7qtUvblC6IM6ru1RypR/GXmZPgBi3+N34pZYP/hVvP8T7CSCEN3YXmpwM+XwSbNMh2x6jhnSuqDGfA1egRMxRSc0hqn/pa33mzqJ5+aIODTfG80wJpjTJMwhpoZoTztVNWkygZg1OoI2sA5FZy+VTHre3CBxoWXIfYOWZJxKXSAqphWhNGstvbkNIETwvhbeorZoI7+1EmA2KQDiu255uG0RHArcJNkmgpb0W71G3WXPT4fxnR1QeoNm1lfYNQ5UgRp47efzLaQJPyqJJHoB5OGgMiAR6IcPgNCMRLj8RlzGiI6hwK+7qDZYCwS/jd8j603XN3umJOfMM+TvT19h1wYZIbYWWP/28UrKr+XcSJ5XUdsZGAinexp/nCTsOjyYCXFL56LYqvuwC3HIJR/76JEQVoClB+dcOPqws/aIHsKyzXswIbKPAgv9XByhbi5vApTqeSEsl2zuLe6G84yERdnd4M+4QRIZaVV08QqHCGjtQqYaaZ4QlBQ6rnduMXmlLuV7PT2M6/SFPmBozIhDfLGk5C13M4AepzJHzgS/m6IBisBUjmRAiFOLmeZ2rYURl/FWBjD855/xzUO9JqwVRlK07Jv70jlKsremMJvhXeDLjlBeXzQxOntKTm7hgB8k8x9P/A=
-  file: pg-slicer
+  file: pg-slicer/pg-slicer
+  skip_cleanup: true
   on:
     repo: sdrobov/pg-slicer
