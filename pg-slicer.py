@@ -278,9 +278,6 @@ def generate_sequence(sequence_name: str, sequence_data: dict) -> str:
     if sequence_data['cache_value']:
         schema += ' CACHE ' + str(sequence_data['cache_value'])
 
-    if sequence_data['is_cycled']:
-        schema += ' CYCLE'
-
     schema += ';\n'
 
     return schema
@@ -300,7 +297,7 @@ def get_sequence_names(cursor: _cursor) -> list:
 
 
 def describe_sequence(sequence_name: str, cursor: _cursor) -> dict:
-    cursor.execute('SELECT start_value, min_value, max_value, increment_by, is_cycled, cache_value '
+    cursor.execute('SELECT start_value, min_value, max_value, increment_by, cache_value '
                    f'FROM {sequence_name}')
     row = cursor.fetchone()
 
@@ -309,8 +306,7 @@ def describe_sequence(sequence_name: str, cursor: _cursor) -> dict:
         'min_value': row[1],
         'max_value': row[2],
         'increment_by': row[3],
-        'is_cycled': row[4],
-        'cache_value': row[5],
+        'cache_value': row[4],
     }
 
 
