@@ -12,7 +12,7 @@ script:
   - cd ../bundle
   - zip -r ../pg-slicer.zip *
   - cd ..
-  - echo '#!/usr/bin/env python' | cat - pg-slicer.zip > pg-slicer/pg-slicer
+  - echo '#!/usr/bin/env python3' | cat - pg-slicer.zip > pg-slicer/pg-slicer
   - chmod +x pg-slicer/pg-slicer
 deploy:
   provider: releases
@@ -21,4 +21,5 @@ deploy:
   file: pg-slicer/pg-slicer
   skip_cleanup: true
   on:
+    tags: true
     repo: sdrobov/pg-slicer
