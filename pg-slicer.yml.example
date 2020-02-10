@@ -1,0 +1,15 @@
+connection:
+  host: ~
+  port: ~
+  user: ~
+  password: ~
+dump:
+  limit: 100
+  tables:
+    sample_table_1:
+      limit: 1000
+      condition: somefield='somevalue'
+    sample_table_2:
+      limit: '*'
+    sample_table_3:
+      condition: 1=1
