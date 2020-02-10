@@ -266,17 +266,12 @@ def generate_sequence(sequence_name: str, sequence_data: dict) -> str:
 
     seq_inc = sequence_data['increment_by']
     seq_min = sequence_data['min_value']
-    seq_max = sequence_data['max_value']
     seq_start = sequence_data['start_value']
 
     schema += f'CREATE SEQUENCE IF NOT EXISTS {sequence_name} ' \
               f'INCREMENT {seq_inc} ' \
               f'MINVALUE {seq_min} ' \
-              f'MAXVALUE {seq_max} ' \
               f'START {seq_start}'
-
-    if sequence_data['cache_value']:
-        schema += ' CACHE ' + str(sequence_data['cache_value'])
 
     schema += ';\n'
 
@@ -297,16 +292,16 @@ def get_sequence_names(cursor: _cursor) -> list:
 
 
 def describe_sequence(sequence_name: str, cursor: _cursor) -> dict:
-    cursor.execute('SELECT start_value, min_value, max_value, increment_by, cache_value '
-                   f'FROM {sequence_name}')
-    row = cursor.fetchone()
+    try:
+        cursor.execute('SELECT currval(%s::regclass)', (sequence_name, ))
+        row = cursor.fetchone()
+    except:
+        row = [1]
 
     return {
         'start_value': row[0],
-        'min_value': row[1],
-        'max_value': row[2],
-        'increment_by': row[3],
-        'cache_value': row[4],
+        'min_value': 1,
+        'increment_by': 1,
     }
 
 
@@ -460,6 +455,7 @@ def main():
     options = parse_cli_args()
     dsn = build_dsn(options)
     connection = psycopg2.connect(dsn)
+    connection.autocommit = True
     cursor = connection.cursor()
     table_names = get_table_names(cursor)
     sequence_names = get_sequence_names(cursor)
