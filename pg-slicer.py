@@ -2,6 +2,8 @@
 import argparse
 import json
 from os import getenv
+from typing import Optional
+
 import psycopg2
 from psycopg2.extensions import cursor as _cursor
 
@@ -17,6 +19,7 @@ class Options:
         self.no_privileges = None
         self.no_publications = None
         self.no_subscriptions = None
+        self.dump_full = []
 
 
 def parse_cli_args() -> Options:
@@ -26,6 +29,7 @@ def parse_cli_args() -> Options:
     parser.add_argument('-U', '--user', dest='user', default=getenv('PGUSER'))
     parser.add_argument('-W', '--password', dest='password')
     parser.add_argument('-l', '--limit', type=int, dest='limit', default=100)
+    parser.add_argument('--dump-full', action='append', dest='dump_full')
     parser.add_argument('--no-privileges', action='store_true', dest='no_privileges')
     parser.add_argument('--no-publications', action='store_true', dest='no_publications')
     parser.add_argument('--no-subscriptions', action='store_true', dest='no_subscriptions')
@@ -307,7 +311,7 @@ def describe_sequence(sequence_name: str, cursor: _cursor) -> dict:
 
 def generate_copy(cursor: _cursor,
                   table_name: str,
-                  limit: int,
+                  limit: Optional[int],
                   hashes: dict,
                   condition: str = None) -> None:
     if table_name not in hashes.keys():
@@ -315,7 +319,8 @@ def generate_copy(cursor: _cursor,
 
     query = f'SELECT * FROM {table_name}'
     query += f' WHERE {condition}' if condition else ''
-    query += f' ORDER BY 1 DESC LIMIT {limit}'
+    query += f' ORDER BY 1 DESC'
+    query += f' LIMIT {limit}' if limit else ''
     cursor.execute(query)
 
     for row in cursor:
@@ -396,6 +401,7 @@ def generate_copy_recursive(cursor: _cursor,
                             table_name: str,
                             tables: dict,
                             limit: int,
+                            dump_full: list,
                             hashes: dict) -> None:
     if table_name in hashes:
         return
@@ -410,18 +416,21 @@ def generate_copy_recursive(cursor: _cursor,
             if parent_table_name != table_name and parent_table_name in hashes.keys():
                 generate_copy_recursive(cursor, parent_table_name, tables, limit, hashes)
 
-            condition = prepare_condition(parent_table_data, tables, hashes)
-            generate_copy(cursor, table_name, limit, hashes, condition)
+            if parent_table_name in dump_full:
+                generate_copy(cursor, table_name, None, hashes, None)
+            else:
+                condition = prepare_condition(parent_table_data, tables, hashes)
+                generate_copy(cursor, table_name, limit, hashes, condition)
     else:
-        generate_copy(cursor, table_name, limit, hashes)
+        generate_copy(cursor, table_name, None if table_name in dump_full else limit, hashes)
 
 
-def generate_data(cursor: _cursor, tables: dict, limit: int) -> str:
+def generate_data(cursor: _cursor, tables: dict, limit: int, dump_full: list) -> str:
     hashes = {}
     data = ''
 
     for table_name in tables.keys():
-        generate_copy_recursive(cursor, table_name, tables, limit, hashes)
+        generate_copy_recursive(cursor, table_name, tables, limit, dump_full, hashes)
 
     for table_name in hashes.keys():
         data += f'COPY {table_name} FROM stdin;\n'
@@ -464,7 +473,7 @@ def main():
                  sequence_names}
     extensions = generate_extensions(cursor)
     schema = generate_schema(tables, sequences)
-    data = generate_data(cursor, tables, options.limit)
+    data = generate_data(cursor, tables, options.limit, options.dump_full)
 
     print(extensions + '\n\n' + schema + '\n\n' + data)
 
