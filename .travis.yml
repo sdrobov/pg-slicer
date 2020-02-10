@@ -1,0 +1,22 @@
+language: python
+os: linux
+install:
+  - pip install -r requirements.txt
+script:
+  - mkdir ../bundle
+  - cp pg-slicer.py ../bundle/__main__.py
+  - cp definitions.py ../bundle/definitions.py
+  - cp -R data_generator ../bundle/data_generator
+  - cp -R options ../bundle/options
+  - cp -R schema_generator ../bundle/schema_generator
+  - cd ../bundle
+  - zip -r ../pg-slicer.zip *
+  - cd ..
+  - echo '#!/usr/bin/env python' | cat - pg-slicer.zip > pg-slicer
+  - chmod +x pg-slicer
+deploy:
+  provider: releases
+  api_key: $GITHUB_OAUTH
+  file: pg-slicer
+  on:
+    tags: true

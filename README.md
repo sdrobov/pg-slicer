@@ -1,4 +1,5 @@
 # PostgreSQL DB data slicer
+[![Build Status](https://travis-ci.org/sdrobov/pg-slicer.svg?branch=master)](https://travis-ci.org/sdrobov/pg-slicer)
 ## Requirements
 - Python 3.6+
 - psycopg2==2.8.4
