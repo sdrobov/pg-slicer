@@ -12,8 +12,8 @@ script:
   - cd ../bundle
   - zip -r ../pg-slicer.zip *
   - cd ..
-  - echo '#!/usr/bin/env python' | cat - pg-slicer.zip > pg-slicer
-  - chmod +x pg-slicer
+  - echo '#!/usr/bin/env python' | cat - pg-slicer.zip > pg-slicer/pg-slicer
+  - chmod +x pg-slicer/pg-slicer
 deploy:
   provider: releases
   api_key: $GITHUB_OAUTH
