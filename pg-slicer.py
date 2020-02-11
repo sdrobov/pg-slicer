@@ -35,7 +35,7 @@ def main():
     cursor = connection.cursor()
     schema_generator = SchemaGenerator(cursor)
     schema = schema_generator.generate_schema()
-    data_generator = DataGenerator(cursor, schema_generator.tables, options)
+    data_generator = DataGenerator(cursor, schema_generator, options)
     data = data_generator.generate_data()
 
     print(schema + '\n\n' + data)

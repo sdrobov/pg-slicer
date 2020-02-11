@@ -1,9 +1,8 @@
 import argparse
-from os import path, getenv
+from os import getenv
+from pathlib import Path
 
 import yaml
-
-from definitions import CONFIG_PATH
 
 
 class Options:
@@ -24,11 +23,21 @@ class Options:
     def make(self):
         self.parse_cli_args()
 
-        if path.exists(CONFIG_PATH) and path.isfile(CONFIG_PATH):
-            self.parse_yaml()
+        if self.find_config():
+            self.parse_yaml(self.find_config())
 
-    def parse_yaml(self):
-        with open(CONFIG_PATH, 'r') as yml_config:
+    @staticmethod
+    def find_config():
+        if Path.cwd().joinpath('pg-slicer.yml').exists():
+            return str(Path.cwd().joinpath('pg-slicer.yml').resolve())
+
+        if Path.home().joinpath('.pg-slicer.yml').exists():
+            return str(Path.home().joinpath('.pg-slicer.yml').resolve())
+
+        return ''
+
+    def parse_yaml(self, config_file: str):
+        with open(config_file, 'r') as yml_config:
             try:
                 config = yaml.safe_load(yml_config)
 
