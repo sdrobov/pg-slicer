@@ -177,7 +177,7 @@ class SchemaGenerator:
 
         self.tables = [self.describe_table(row[0]) for row in self.cursor.fetchall() if row[0]]
 
-    def get_root_tables(self) -> list:
+    def get_root_tables(self) -> List[str]:
         root_tables = []
 
         for table in self.tables:
