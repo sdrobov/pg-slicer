@@ -14,7 +14,7 @@ class Column:
         self.name = name
         self.type = type
         self.default = default
-        self.not_null = not_null
+        self.is_null = not not_null
         self.position = position
         self.comment = comment
 
@@ -204,7 +204,7 @@ class SchemaGenerator:
         for column in table.columns:
             column_query = f'"{column.name}" {column.type}'
             column_query += f' DEFAULT {column.default}' if column.default else ''
-            column_query += ' NOT NULL' if column.not_null else ''
+            column_query += ' NOT NULL' if not column.is_null else ''
 
             column_queries.append('\t' + column_query)
 

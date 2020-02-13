@@ -14,7 +14,7 @@ class DataGenerator:
         self.options = options
         self.hashes = {}
 
-    def generate_copy(self, table: Table, condition: str = None) -> None:
+    def do_select_with_condition(self, table: Table, condition: str = None) -> None:
         if table.name not in self.hashes.keys():
             self.hashes[table.name] = {}
 
@@ -71,7 +71,7 @@ class DataGenerator:
             return ''
 
         rel_column = self.get_column_at(table, relation.src)
-        if not rel_column or not rel_column.not_null:
+        if not rel_column or rel_column.is_null:
             return ''
 
         for row in self.hashes[relation.table_name].values():
@@ -85,7 +85,7 @@ class DataGenerator:
 
     @staticmethod
     def generate_condition(column: Column, values: list = None) -> str:
-        null_part = f' {column.name} IS NULL' if not column.not_null else ''
+        null_part = f' {column.name} IS NULL' if column.is_null else ''
         cond_part = f' {column.name} IN (%s)' % ','.join(values) if values else ''
 
         if cond_part and null_part:
@@ -101,7 +101,7 @@ class DataGenerator:
 
         return None
 
-    def generate_copy_recursive(self, table_name: str) -> None:
+    def select_from(self, table_name: str) -> None:
         table = self.schema.get_table(table_name)
         conditions = []
 
@@ -110,7 +110,7 @@ class DataGenerator:
                 continue
 
             rel_column = self.get_column_at(table, relation.src)
-            if not rel_column or not rel_column.not_null:
+            if not rel_column or rel_column.is_null:
                 continue
 
             condition = self.prepare_condition(table, relation)
@@ -118,7 +118,7 @@ class DataGenerator:
                 conditions.append(f'({condition})')
 
         condition = ' OR '.join(conditions) if len(conditions) > 0 else None
-        self.generate_copy(table, condition)
+        self.do_select_with_condition(table, condition)
 
     def generate_data(self) -> str:
         data = ''
@@ -143,7 +143,7 @@ class DataGenerator:
                         continue
 
                     rel_column = self.get_column_at(table, relation.src)
-                    if not rel_column or not rel_column.not_null:
+                    if not rel_column or rel_column.is_null:
                         continue
 
                     if relation.table_name in new_layer_names \
@@ -163,7 +163,7 @@ class DataGenerator:
 
         for table_layer in table_layers:
             for table in table_layer:
-                self.generate_copy_recursive(table)
+                self.select_from(table)
 
         for table_name in self.hashes.keys():
             data += f'COPY {table_name} FROM stdin;\n'
