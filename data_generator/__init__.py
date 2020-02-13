@@ -120,9 +120,7 @@ class DataGenerator:
         condition = ' OR '.join(conditions) if len(conditions) > 0 else None
         self.do_select_with_condition(table, condition)
 
-    def generate_data(self) -> str:
-        data = ''
-
+    def generate_data(self):
         table_layers = [[table for table in self.schema.get_root_tables()]]
         processed_tables = table_layers[0]
         while len(processed_tables) < len(self.schema.tables):
@@ -165,10 +163,7 @@ class DataGenerator:
             for table in table_layer:
                 self.select_from(table)
 
-        for table_name in self.hashes.keys():
-            data += f'COPY {table_name} FROM stdin;\n'
-            for rows, row_data in self.hashes[table_name].items():
-                data += '\t'.join(row_data) + '\n'
-            data += '\\.\n\n'
-
-        return data
+                print(f'COPY {table} FROM stdin;\n')
+                for row in self.hashes[table].values():
+                    print('\t'.join(row) + '\n')
+                print('\\.\n\n')
