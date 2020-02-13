@@ -1,5 +1,5 @@
 import json
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from psycopg2.extensions import cursor as _cursor
 
@@ -8,34 +8,40 @@ from schema_generator import SchemaGenerator, Table, Relation, Column
 
 
 class DataGenerator:
+    cursor: _cursor
+    schema: SchemaGenerator
+    options: Options
+    hashes: Dict[str, Dict[int, List]]
+
     def __init__(self, cursor: _cursor, schema: SchemaGenerator, options: Options):
         self.cursor = cursor
         self.schema = schema
         self.options = options
         self.hashes = {}
 
-    def do_select_with_condition(self, table: Table, condition: str = None) -> None:
+    def do_select_with_condition(self, table: Table, where: str = None) -> None:
         if table.name not in self.hashes.keys():
             self.hashes[table.name] = {}
 
         if table.name in self.options.custom_conditions.keys():
-            condition = self.options.custom_conditions[table.name]
+            where = self.options.custom_conditions[table.name]
+
+        if not where:
+            where = '1=1'
 
         if table.name in self.options.custom_limits.keys():
             limit = self.options.custom_limits[table.name]
         elif table.name in self.options.dump_full:
-            limit = None
+            limit = 'ALL'
         else:
             limit = self.options.limit
 
-        query = f'SELECT * FROM {table.name}'
-        query += f' WHERE {condition}' if condition else ''
-        query += f' ORDER BY 1 DESC'
-        query += f' LIMIT {limit}' if limit else ''
+        query = f'SELECT DISTINCT * FROM {table.name} WHERE {where} ORDER BY 1 DESC LIMIT {limit}'
         self.cursor.execute(query)
 
         for row in self.cursor:
-            if row[0] in self.hashes[table.name].keys():
+            key = hash(frozenset(row))
+            if key in self.hashes[table.name].keys():
                 continue
 
             line = []
@@ -59,12 +65,12 @@ class DataGenerator:
                                 .replace('\n', '\\r\\n')
                                 .replace('\t', '\\t'))
 
-            self.hashes[table.name][row[0]] = line
+            self.hashes[table.name][key] = line
 
     def prepare_condition(self, table: Table, relation: Relation) -> str:
         values = []
 
-        if relation.table_name not in self.hashes:
+        if relation.table_name not in self.hashes.keys():
             return ''
 
         if not relation.src or not relation.dest:
@@ -122,10 +128,9 @@ class DataGenerator:
 
     def generate_data(self):
         table_layers = [[table for table in self.schema.get_root_tables()]]
-        processed_tables = table_layers[0]
+        processed_tables = [table for table in self.schema.get_root_tables()]
         while len(processed_tables) < len(self.schema.tables):
             new_layer = []
-            new_layer_names = []
 
             for table in self.schema.tables:
                 if table.name in processed_tables:
@@ -144,7 +149,7 @@ class DataGenerator:
                     if not rel_column or rel_column.is_null:
                         continue
 
-                    if relation.table_name in new_layer_names \
+                    if relation.table_name in new_layer \
                             or relation.table_name not in processed_tables:
                         add_to_new_layer = False
 
@@ -163,7 +168,9 @@ class DataGenerator:
             for table in table_layer:
                 self.select_from(table)
 
-                print(f'COPY {table} FROM stdin;\n')
-                for row in self.hashes[table].values():
-                    print('\t'.join(row) + '\n')
-                print('\\.\n\n')
+                if len(self.hashes[table].keys()) > 0:
+                    print(f'COPY {table} FROM stdin;')
+                    for row in self.hashes[table].values():
+                        if row:
+                            print('\t'.join(row))
+                    print('\\.\n')
