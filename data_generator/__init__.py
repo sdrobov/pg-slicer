@@ -20,7 +20,15 @@ class DataGenerator:
         self.hashes = {}
 
     def do_select_with_condition(self, table: Table, where: str = None) -> None:
-        if table.name not in self.hashes.keys():
+        if table.name in self.hashes.keys():
+            if table.name in self.options.custom_conditions.keys() \
+                    or table.name in self.options.dump_full:
+                return
+
+            if table.name in self.options.custom_limits.keys() and \
+                    len(self.hashes[table.name].keys()) >= self.options.custom_limits[table.name]:
+                return
+        else:
             self.hashes[table.name] = {}
 
         if table.name in self.options.custom_conditions.keys():
