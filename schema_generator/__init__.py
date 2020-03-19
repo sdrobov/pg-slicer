@@ -265,6 +265,8 @@ class SchemaGenerator:
 
                 self.generate_create_table_recursive(table, processed_tables)
 
+        self.generate_views()
+
         return self.schema
 
     def generate_sequence(self, sequence: Sequence):
@@ -315,3 +317,26 @@ class SchemaGenerator:
                 f'COMMENT ON EXTENSION "{ext_name}" IS \'{ext_descr}\';\n')
 
         self.schema += '\n'.join(extensions) + '\n\n'
+
+    def generate_views(self):
+        self.cursor.execute("""
+SELECT c.relname, pg_catalog.pg_get_viewdef(c.oid, true), c.relkind FROM pg_catalog.pg_class c
+LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('v', 'm')
+  AND n.nspname <> 'pg_catalog'
+  AND n.nspname <> 'information_schema'
+  AND n.nspname !~ '^pg_toast'
+  AND pg_catalog.pg_table_is_visible(c.oid)
+  AND c.relname !~ '^pg_';
+        """)
+
+        for row in self.cursor:
+            view_name = row[0]
+            view_query = row[1]
+
+            query = '\nCREATE OR REPLACE'
+            if row[2] == 'm':
+                query += ' MATERIALIZED'
+            query += f' VIEW {view_name} AS {view_query};\n\n'
+
+            self.schema += query
