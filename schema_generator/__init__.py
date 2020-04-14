@@ -1,105 +1,29 @@
-from typing import List, Optional
+from typing import List, Optional, Any
 
-from psycopg2.extensions import cursor as _cursor
-
-
-class Column:
-    def __init__(self,
-                 name: str,
-                 type: str,
-                 default: str,
-                 not_null: bool,
-                 position: int,
-                 comment: str):
-        self.name = name
-        self.type = type
-        self.default = default
-        self.is_null = not not_null
-        self.position = position
-        self.comment = comment
-
-
-class Index:
-    def __init__(self,
-                 name: str,
-                 is_primary: bool,
-                 is_unique: bool,
-                 create_query: str,
-                 constraint_query: str):
-        self.name = name
-        self.is_primary = is_primary
-        self.is_unique = is_unique
-        self.create_query = create_query
-        self.constraint_query = constraint_query
-
-
-class Relation:
-    def __init__(self,
-                 table_name: str,
-                 fk_name: str,
-                 create_query: str,
-                 relation: str,
-                 src: int = None,
-                 dest: int = None):
-        self.table_name = table_name
-        self.fk_name = fk_name
-        self.create_query = create_query
-        self.relation = relation
-        self.src = src
-        self.dest = dest
-
-    def is_parent(self) -> bool:
-        return self.relation == 'parent'
-
-    def is_child(self) -> bool:
-        return self.relation == 'child'
-
-
-class Table:
-    def __init__(self,
-                 name: str,
-                 columns: List[Column] = None,
-                 indexes: List[Index] = None,
-                 relations: List[Relation] = None):
-        self.name = name
-        self.columns = columns
-        self.indexes = indexes
-        self.relations = relations
-
-
-class Sequence:
-    def __init__(self,
-                 name: str,
-                 start_value: int = None,
-                 min_value: int = None,
-                 increment_by: int = None):
-        self.name = name
-        self.start_value = start_value
-        self.min_value = min_value
-        self.increment_by = increment_by
+from sqlalchemy import MetaData, Table, ForeignKey, inspect, Index
+from sqlalchemy.engine import Engine, reflection, ResultProxy
+from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.sql.ddl import CreateTable, CreateIndex, SetTableComment, SetColumnComment
 
 
 class SchemaGenerator:
-    tables: List[Table]
-    sequences: List[Sequence]
+    sequences: List[ResultProxy]
     schema: str
 
-    def __init__(self, cursor: _cursor):
-        self.cursor = cursor
+    def __init__(self, engine: Engine):
+        self.engine = engine
         self.tables = []
         self.sequences = []
         self.schema = ''
 
     def describe_table(self, table_name: str):
-        table = Table(table_name)
-
-        self.cursor.execute('SELECT c.oid FROM pg_catalog.pg_class c '
+        self.engine.execute('SELECT c.oid FROM pg_catalog.pg_class c '
                             'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
                             'WHERE c.relname OPERATOR(pg_catalog.~) %s '
                             'AND pg_catalog.pg_table_is_visible(c.oid)', (f'^({table_name})$',))
-        oid = self.cursor.fetchone()[0]
+        oid = self.engine.fetchone()[0]
 
-        self.cursor.execute('SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), '
+        self.engine.execute('SELECT a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod), '
                             '(SELECT substring(pg_catalog.pg_get_expr(d.adbin, d.adrelid) for 128) '
                             'FROM pg_catalog.pg_attrdef d WHERE d.adrelid = a.attrelid '
                             'AND d.adnum = a.attnum AND a.atthasdef), a.attnotnull, a.attnum, '
@@ -112,9 +36,9 @@ class SchemaGenerator:
                             'END AS attstattarget, pg_catalog.col_description(a.attrelid, '
                             'a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid = %s '
                             'AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum', (oid,))
-        columns = self.cursor.fetchall()
+        columns = self.engine.fetchall()
 
-        self.cursor.execute('SELECT c2.relname, i.indisprimary, i.indisunique, i.indisclustered, '
+        self.engine.execute('SELECT c2.relname, i.indisprimary, i.indisunique, i.indisclustered, '
                             'i.indisvalid, pg_catalog.pg_get_indexdef(i.indexrelid, 0, true), '
                             'pg_catalog.pg_get_constraintdef(con.oid, true), contype, '
                             'condeferrable, condeferred, i.indisreplident, c2.reltablespace '
@@ -124,49 +48,28 @@ class SchemaGenerator:
                             'IN (\'p\',\'u\',\'x\'))WHERE c.oid = %s AND c.oid = i.indrelid '
                             'AND i.indexrelid = c2.oid ORDER BY i.indisprimary DESC, '
                             'i.indisunique DESC, c2.relname', (oid,))
-        indexes = self.cursor.fetchall()
+        indexes = self.engine.fetchall()
 
-        self.cursor.execute('SELECT conname, confrelid::pg_catalog.regclass, '
+        self.engine.execute('SELECT conname, confrelid::pg_catalog.regclass, '
                             'pg_catalog.pg_get_constraintdef(r.oid, true) as condef, \'parent\' '
                             'FROM pg_catalog.pg_constraint r '
                             'WHERE r.conrelid = %s '
                             'AND r.contype = \'f\' '
                             'ORDER BY 1', (oid,))
-        parents = self.cursor.fetchall()
+        parents = self.engine.fetchall()
 
-        self.cursor.execute('SELECT conname, conrelid::pg_catalog.regclass, '
+        self.engine.execute('SELECT conname, conrelid::pg_catalog.regclass, '
                             'pg_catalog.pg_get_constraintdef(c.oid, true) as condef, \'child\' '
                             'FROM pg_catalog.pg_constraint c '
                             'WHERE c.confrelid = %s '
                             'AND c.contype = \'f\' '
                             'ORDER BY 1', (oid,))
-        children = self.cursor.fetchall()
+        children = self.engine.fetchall()
 
-        relations = parents + children
-
-        table.columns = [Column(column[0], column[1], column[2], column[3], column[4], column[11])
-                         for column in columns]
-        table.indexes = [Index(index[0], index[1], index[2], index[5], index[6])
-                         for index in indexes]
-        table.relations = [Relation(relation[1], relation[0], relation[2], relation[3])
-                           for relation in relations]
-
-        for relation in table.relations:
-            if relation.is_child():
-                continue
-
-            self.cursor.execute('SELECT conkey, confkey '
-                                'FROM pg_catalog.pg_constraint '
-                                'WHERE conname = %s', (relation.fk_name,))
-
-            row = self.cursor.fetchone()
-            if row:
-                [[relation.src], [relation.dest]] = [row[0], row[1]]
-
-        return table
+        return None
 
     def get_tables(self):
-        self.cursor.execute('SELECT c.relname '
+        self.engine.execute('SELECT c.relname '
                             'FROM pg_catalog.pg_class c '
                             'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
                             'WHERE c.relkind IN (\'r\',\'p\',\'\') '
@@ -175,7 +78,7 @@ class SchemaGenerator:
                             'AND n.nspname !~ \'^pg_toast\' '
                             'AND pg_catalog.pg_table_is_visible(c.oid)')
 
-        self.tables = [self.describe_table(row[0]) for row in self.cursor.fetchall() if row[0]]
+        self.tables = [self.describe_table(row[0]) for row in self.engine.fetchall() if row[0]]
 
     def get_root_tables(self) -> List[str]:
         root_tables = []
@@ -193,7 +96,7 @@ class SchemaGenerator:
 
         return root_tables
 
-    def generate_create_table(self, table: Table):
+    def generate_create_table(self, table):
         table_query = f'CREATE TABLE IF NOT EXISTS "{table.name}" (\n'
 
         column_queries = []
@@ -222,7 +125,7 @@ class SchemaGenerator:
 
         self.schema += table_query + '\n'
 
-    def generate_create_table_recursive(self, table: Table, processed_tables: list):
+    def generate_create_table_recursive(self, table, processed_tables: list):
         processed_tables.append(table.name)
         parent_tables = [relation.table_name for relation in table.relations
                          if relation.is_parent()
@@ -246,37 +149,40 @@ class SchemaGenerator:
 
     def generate_schema(self):
         self.generate_extensions()
+        self.generate_sequences()
+
+        meta = MetaData()
+        meta.reflect(bind=self.engine)
+
+        for table in meta.sorted_tables:
+            self.schema += str(CreateTable(table).compile(self.engine)) + '\n\n'
+
+            for idx in table.indexes:
+                self.schema += str(CreateIndex(idx).compile(self.engine)) + '\n\n'
+
+            for c in table.c:
+                if c.comment:
+                    self.schema += str(SetColumnComment(c).compile(self.engine)) + '\n\n'
+
+            if table.comment:
+                self.schema += str(SetTableComment(table).compile(self.engine)) + '\n\n'
+
+        return self.schema
+
+    def generate_sequence(self, sequence):
+        self.schema += f'CREATE SEQUENCE IF NOT EXISTS {sequence} ' \
+                       'INCREMENT 1 ' \
+                       'MINVALUE 1 ' \
+                       'START 0;\n\n'
+
+    def generate_sequences(self):
         self.get_sequences()
 
         for sequence in self.sequences:
             self.generate_sequence(sequence)
 
-        self.get_tables()
-        processed_tables = []
-
-        for table_name in self.get_root_tables():
-            self.generate_create_table(self.get_table(table_name))
-            processed_tables.append(table_name)
-
-        while len(processed_tables) < len(self.tables):
-            for table in self.tables:
-                if table.name in processed_tables:
-                    continue
-
-                self.generate_create_table_recursive(table, processed_tables)
-
-        self.generate_views()
-
-        return self.schema
-
-    def generate_sequence(self, sequence: Sequence):
-        self.schema += f'CREATE SEQUENCE IF NOT EXISTS {sequence.name} ' \
-                       f'INCREMENT {sequence.increment_by} ' \
-                       f'MINVALUE {sequence.min_value} ' \
-                       f'START {sequence.start_value};\n\n'
-
     def get_sequences(self):
-        self.cursor.execute('SELECT c.relname '
+        result: ResultProxy = self.engine.execute('SELECT c.relname '
                             'FROM pg_catalog.pg_class c '
                             'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace '
                             'WHERE c.relkind IN (\'S\',\'\') '
@@ -285,30 +191,18 @@ class SchemaGenerator:
                             'AND n.nspname !~ \'^pg_toast\' '
                             'AND pg_catalog.pg_table_is_visible(c.oid)')
 
-        self.sequences = [self.describe_sequence(r[0]) for r in self.cursor.fetchall() if r[0]]
-
-    def describe_sequence(self, sequence_name: str) -> Sequence:
-        sequence = Sequence(sequence_name, min_value=1, increment_by=1)
-        try:
-            self.cursor.execute('SELECT currval(%s::regclass)', (sequence_name,))
-            row = self.cursor.fetchone()
-        except:
-            row = [1]
-
-        sequence.start_value = row[0]
-
-        return sequence
+        self.sequences = [r[0] for r in result.fetchall() if r[0]]
 
     def generate_extensions(self):
-        self.cursor.execute('SELECT e.extname, n.nspname, c.description '
+        rows = self.engine.execute('SELECT e.extname, n.nspname, c.description '
                             'FROM pg_catalog.pg_extension e '
                             'LEFT JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace '
                             'LEFT JOIN pg_catalog.pg_description c ON c.objoid= e.oid '
                             'AND c.classoid = \'pg_catalog.pg_extension\'::pg_catalog.regclass '
-                            'ORDER BY n.nspname')
+                            'ORDER BY n.nspname').fetchall()
 
         extensions = []
-        for row in self.cursor:
+        for row in rows:
             ext_name = row[0]
             ext_schema = row[1]
             ext_descr = row[2]
@@ -319,7 +213,7 @@ class SchemaGenerator:
         self.schema += '\n'.join(extensions) + '\n\n'
 
     def generate_views(self):
-        self.cursor.execute("""
+        self.engine.execute("""
 SELECT c.relname, pg_catalog.pg_get_viewdef(c.oid, true), c.relkind FROM pg_catalog.pg_class c
 LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('v', 'm')
@@ -330,7 +224,7 @@ WHERE c.relkind IN ('v', 'm')
   AND c.relname !~ '^pg_';
         """)
 
-        for row in self.cursor:
+        for row in self.engine:
             view_name = row[0]
             view_query = row[1]
 

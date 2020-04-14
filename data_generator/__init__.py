@@ -1,21 +1,19 @@
 import json
 from typing import Optional, List, Dict, Any
 
-from psycopg2.extensions import cursor as _cursor
+from sqlalchemy import Table
+from sqlalchemy.engine import Engine
 
 from options import Options
-from schema_generator import SchemaGenerator, Table, Relation, Column
 
 
 class DataGenerator:
-    cursor: _cursor
-    schema: SchemaGenerator
+    engine: Engine
     options: Options
     hashes: Dict[str, Dict[int, List]]
 
-    def __init__(self, cursor: _cursor, schema: SchemaGenerator, options: Options):
-        self.cursor = cursor
-        self.schema = schema
+    def __init__(self, engine: Engine, options: Options):
+        self.engine = engine
         self.options = options
         self.hashes = {}
 
@@ -45,9 +43,9 @@ class DataGenerator:
             limit = self.options.limit
 
         query = f'SELECT DISTINCT * FROM {table.name} WHERE {where} ORDER BY 1 DESC LIMIT {limit}'
-        self.cursor.execute(query)
+        self.engine.execute(query)
 
-        for row in self.cursor:
+        for row in self.engine:
             key = hash(frozenset(row))
             if key in self.hashes[table.name].keys():
                 continue
@@ -75,7 +73,7 @@ class DataGenerator:
 
             self.hashes[table.name][key] = line
 
-    def prepare_condition(self, table: Table, relation: Relation) -> str:
+    def prepare_condition(self, table: Table, relation) -> str:
         values = []
 
         if relation.table_name not in self.hashes.keys():
@@ -98,7 +96,7 @@ class DataGenerator:
         return self.generate_condition(rel_column, values)
 
     @staticmethod
-    def generate_condition(column: Column, values: list = None) -> str:
+    def generate_condition(column, values: list = None) -> str:
         null_part = f' {column.name} IS NULL' if column.is_null else ''
         cond_part = f' {column.name} IN (%s)' % ','.join(values) if values else ''
 
@@ -108,7 +106,7 @@ class DataGenerator:
         return cond_part + null_part
 
     @staticmethod
-    def get_column_at(table: Table, pos: int) -> Optional[Column]:
+    def get_column_at(table: Table, pos: int) -> Optional[Any]:
         for column in table.columns:
             if column.position == pos:
                 return column

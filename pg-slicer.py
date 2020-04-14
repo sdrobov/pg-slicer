@@ -1,42 +1,45 @@
 #!/usr/bin/env python3
 
-import psycopg2
+from urllib.parse import quote_plus
+
+from sqlalchemy import create_engine
+
 from data_generator import DataGenerator
 from options import Options
 from schema_generator import SchemaGenerator
 
 
 def build_dsn(options: Options) -> str:
-    params = {
-        'dbname': options.DBNAME
-    }
+    dsn = 'postgresql://'
 
     if options.user:
-        params['user'] = options.user
+        dsn += options.user
 
-    if options.password:
-        params['password'] = options.password
+        if options.password:
+            dsn += ':' + quote_plus(options.password)
+
+        dsn += '@'
 
     if options.host:
-        params['host'] = options.host
+        dsn += options.host
 
     if options.port:
-        params['port'] = options.port
+        dsn += ':' + str(options.port)
 
-    return ' '.join([f'{key}={value}' for key, value in params.items()])
+    dsn += '/' + options.DBNAME
+
+    return dsn
 
 
 def main():
     options = Options()
     options.make()
     dsn = build_dsn(options)
-    connection = psycopg2.connect(dsn)
-    connection.autocommit = True
-    cursor = connection.cursor()
-    schema_generator = SchemaGenerator(cursor)
+    engine = create_engine(dsn)
+    schema_generator = SchemaGenerator(engine)
     schema = schema_generator.generate_schema()
     print(schema)
-    data_generator = DataGenerator(cursor, schema_generator, options)
+    data_generator = DataGenerator(engine, options)
     data_generator.generate_data()
 
 
