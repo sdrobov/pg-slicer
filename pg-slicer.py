@@ -39,8 +39,8 @@ def main():
     schema_generator = SchemaGenerator(engine)
     schema = schema_generator.generate_schema()
     print(schema)
-    data_generator = DataGenerator(engine, options)
-    data_generator.generate_data()
+    # data_generator = DataGenerator(engine, options)
+    # data_generator.generate_data()
 
 
 if __name__ == '__main__':
